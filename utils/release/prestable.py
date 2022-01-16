@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 
 # -
+# TODO:
+# - use particular commit for release tag
+# - use context and roll-back changes on failure
+# - improve logging
 
 import argparse
 import logging
@@ -21,6 +25,8 @@ SET(VERSION_MINOR {VERSION_MINOR})
 SET(VERSION_PATCH {VERSION_PATCH})
 SET(VERSION_GITHASH {VERSION_GITHASH})
 SET(VERSION_DESCRIBE {VERSION_DESCRIBE})
+SET(VERSION_STRING {VERSION_STRING})
+# end of autochange
 """
 
 
@@ -212,18 +218,24 @@ def main():
     if not args.no_check_branch:
         git.check_branch(args.release_type, versions)
 
-    if not args.no_publish_relese:
+    new_versions = git.update_versions(args.release_type, versions)
+
+    if not args.no_publish_release:
         # Publish release on github for the current HEAD (master, if checked)
-        git.run(f"gh release create {git.new_tag}")
+        git.run(f"gh release create --draft {git.new_tag} --target {git.sha}")
 
     # Commit updated versions to HEAD and push to remote
-    new_versions = git.update_versions(args.release_type, versions)
     write_versions(versions_file, new_versions)
+    git.run(f"git checkout -b {git.new_branch}-helper")
     git.run(
         f"git commit -m 'Auto version update to [{new_versions['VERSION_STRING']}] "
         f"[{new_versions['VERSION_REVISION']}]' {versions_file}"
     )
-    git.run("git push")
+    git.run(f"git push -u origin {git.new_branch}-helper")
+    git.run(
+        f"gh pr create --title 'Update version after release {git.new_branch}' "
+        f"--body-file '{git.root}/.github/PULL_REQUEST_TEMPLATE.md'"
+    )
 
     # Create a new branch from the previous commit and push there with creating
     # a PR
@@ -233,11 +245,12 @@ def main():
         f"git commit -m 'Auto version update to [{versions['VERSION_STRING']}] "
         f"[{versions['VERSION_REVISION']}]' {versions_file}"
     )
+    git.run(f"git push -u origin {git.new_branch}")
     git.run(
         "gh pr create --title 'Release pull request for branch "
         f"{versions['VERSION_MAJOR']}.{versions['VERSION_MINOR']}' --body "
-        "'This PullRequest is part of ClickHouse release cycle. It's used by CI system "
-        "only. Don't perform any changes with it.' --label release"
+        "'This PullRequest is part of ClickHouse release cycle. It is used by CI system "
+        "only. Do not perform any changes with it.' --label release"
     )
 
 
