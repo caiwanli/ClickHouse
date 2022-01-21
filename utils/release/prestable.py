@@ -167,7 +167,8 @@ def write_versions(filename: str, versions: VERSIONS):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        description="Script to release a new ClickHouse version",
+        description="Script to release a new ClickHouse version, requires `git` and "
+        "`gh` (github-cli) commands",
     )
 
     parser.add_argument(
@@ -249,8 +250,8 @@ def main():
     git.run(
         "gh pr create --title 'Release pull request for branch "
         f"{versions['VERSION_MAJOR']}.{versions['VERSION_MINOR']}' --body "
-        "'This PullRequest is part of ClickHouse release cycle. It is used by CI system "
-        "only. Do not perform any changes with it.' --label release"
+        "'This PullRequest is part of ClickHouse release cycle. It is used by CI "
+        "system only. Do not perform any changes with it.' --label release"
     )
 
 
