@@ -287,6 +287,10 @@ if (USE_SIMDJSON)
     add_subdirectory (simdjson-cmake)
 endif()
 
+if(USE_HIREDIS)
+    add_subdirectory (hiredis-cmake)
+endif()
+
 if (USE_FASTOPS)
     add_subdirectory (fastops-cmake)
 endif()

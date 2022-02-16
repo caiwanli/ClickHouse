@@ -305,6 +305,7 @@ dbms_target_link_libraries (
         Poco::JSON
         Poco::MongoDB
         string_utils
+        hiredis
     PUBLIC
         ${MYSQLXX_LIBRARY}
         boost::system
