@@ -112,12 +112,13 @@ class IProcessor
 protected:
     InputPorts inputs;
     OutputPorts outputs;
+    size_t wangxinshuo_index;
 
 public:
     IProcessor() = default;
 
     IProcessor(InputPorts inputs_, OutputPorts outputs_)
-        : inputs(std::move(inputs_)), outputs(std::move(outputs_))
+        : inputs(std::move(inputs_)), outputs(std::move(outputs_)), wangxinshuo_index(0)
     {
         for (auto & port : inputs)
             port.processor = this;
@@ -126,6 +127,8 @@ public:
     }
 
     virtual String getName() const = 0;
+
+    void setIndex(size_t idx) { wangxinshuo_index = idx; }
 
     enum class Status
     {
