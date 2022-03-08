@@ -54,6 +54,7 @@ FilterTransform::FilterTransform(
     , filter_column_name(std::move(filter_column_name_))
     , remove_filter_column(remove_filter_column_)
     , on_totals(on_totals_)
+    , times(0)
 {
     transformed_header = getInputPort().getHeader();
     expression->execute(transformed_header);
@@ -82,7 +83,8 @@ IProcessor::Status FilterTransform::prepare()
     }
 
     auto status = ISimpleTransform::prepare();
-    std::string key = filter_column_name, value = "wangxinshuo";
+    std::string key = filter_column_name + "_" + std::to_string(wangxinshuo_index) + "_" + std::to_string(times++);
+    std::string value = "wangxinshuo";
     redis_client.set(key.c_str(), key.length(), value.c_str(), value.length());
     
 

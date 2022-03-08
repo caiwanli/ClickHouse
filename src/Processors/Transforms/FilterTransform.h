@@ -40,6 +40,7 @@ private:
     bool remove_filter_column;
     bool on_totals;
     RedisClient redis_client;
+    size_t times;
 
     ConstantFilterDescription constant_filter_description;
     size_t filter_column_position = 0;
