@@ -2,6 +2,7 @@
 #include <Processors/ISimpleTransform.h>
 #include <Columns/FilterDescription.h>
 #include <RedisClient.h>
+#include <common/logger_useful.h>
 
 namespace DB
 {
@@ -34,6 +35,8 @@ public:
 protected:
     void transform(Chunk & chunk) override;
 
+    void transform(Chunk & input_chunk, Chunk & output_chunk) override;
+
 private:
     ExpressionActionsPtr expression;
     String filter_column_name;
@@ -41,6 +44,12 @@ private:
     bool on_totals;
     RedisClient redis_client;
     size_t times;
+    enum CacheStep{
+        Null,
+        LoadInMemory,
+        StoreToRedis
+    } step;
+    Poco::Logger* log;
 
     ConstantFilterDescription constant_filter_description;
     size_t filter_column_position = 0;
@@ -51,6 +60,8 @@ private:
     bool are_prepared_sets_initialized = false;
 
     void removeFilterIfNeed(Chunk & chunk) const;
+
+    void updateStep();
 };
 
 }

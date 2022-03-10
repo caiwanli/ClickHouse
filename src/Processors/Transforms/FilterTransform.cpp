@@ -4,6 +4,21 @@
 #include <Columns/ColumnsCommon.h>
 #include <Core/Field.h>
 
+#include <IO/WriteBuffer.h>
+#include <IO/ReadBuffer.h>
+#include <parquet/arrow/writer.h>
+#include <parquet/arrow/reader.h>
+#include <Processors/Formats/Impl/CHColumnToArrowColumn.h>
+#include <Processors/Formats/Impl/ArrowColumnToCHColumn.h>
+#include <Processors/Formats/Impl/ArrowBufferedStreams.h>
+
+#define THROW_WXS_NOT_OK(status)                                     \
+    do                                                                 \
+    {                                                                  \
+        if (::arrow::Status _s = (status); !_s.ok())                   \
+            throw Exception(_s.ToString(), ErrorCodes::BAD_ARGUMENTS); \
+    } while (false)
+
 namespace DB
 {
 
@@ -24,6 +39,44 @@ static void replaceFilterToConstant(Block & block, const String & filter_column_
         /// Replace the filter column to a constant with value 1.
         FilterDescription filter_description_check(*column_elem.column);
         column_elem.column = column_elem.type->createColumnConst(block.rows(), 1u);
+    }
+}
+
+static void ChunkToParquet(Chunk& chunk, WriteBuffer& buffer, const Block& header, Poco::Logger* log)
+{
+    UNUSED(log);
+    const size_t columns_num = chunk.getNumColumns();
+    std::shared_ptr<arrow::Table> arrow_table;
+    CHColumnToArrowColumn::chChunkToArrowTable(arrow_table, header, chunk, columns_num, "Parquet");
+    std::unique_ptr<parquet::arrow::FileWriter> file_writer;
+    {
+        auto sink = std::make_shared<ArrowBufferedOutputStream>(buffer);
+        parquet::WriterProperties::Builder builder;
+        builder.compression(parquet::Compression::SNAPPY);
+        auto props = builder.build();
+        auto status = parquet::arrow::FileWriter::Open(*arrow_table->schema(), 
+                                                        arrow::default_memory_pool(), 
+                                                        sink, props, &file_writer);
+        if (!status.ok()) throw Exception{"Error while opening a table: " + status.ToString(), 1};
+    }
+    auto status = file_writer->WriteTable(*arrow_table, 1000000);
+    if (!status.ok()) throw Exception{"Error while writing a table: " + status.ToString(), 1};
+}
+
+static void ParquetToChunk(Chunk& chunk, ReadBuffer& buffer, const Block& header, Poco::Logger* log)
+{
+    UNUSED(log);
+    std::unique_ptr<parquet::arrow::FileReader> file_reader;
+    THROW_WXS_NOT_OK(parquet::arrow::OpenFile(asArrowFile(buffer), arrow::default_memory_pool(), &file_reader));
+    std::shared_ptr<arrow::Schema> schema;
+    THROW_WXS_NOT_OK(file_reader->GetSchema(&schema));
+    std::shared_ptr<arrow::Table> table;
+    arrow::Status read_status = file_reader->ReadTable(&table);
+    if (!read_status.ok()) throw Exception{"Error while reading Parquet data: " + read_status.ToString(), 1};
+    try{
+        ArrowColumnToCHColumn::arrowTableToCHChunk(chunk, table, header, "Parquet");
+    } catch(...){
+        LOG_INFO(log, "ArrowColumnToCHColumn::arrowTableToCHChunk exception");
     }
 }
 
@@ -55,6 +108,8 @@ FilterTransform::FilterTransform(
     , remove_filter_column(remove_filter_column_)
     , on_totals(on_totals_)
     , times(0)
+    , step(Null)
+    , log(&Poco::Logger::get("FilterTransform"))
 {
     transformed_header = getInputPort().getHeader();
     expression->execute(transformed_header);
@@ -82,11 +137,88 @@ IProcessor::Status FilterTransform::prepare()
         return Status::Finished;
     }
 
-    auto status = ISimpleTransform::prepare();
-    std::string key = filter_column_name + "_" + std::to_string(wangxinshuo_index) + "_" + std::to_string(times++);
-    std::string value = "wangxinshuo";
-    redis_client.set(key.c_str(), key.length(), value.c_str(), value.length());
-    
+    auto func = [&](){
+        if (output.isFinished())
+        {
+            input.close();
+            return Status::Finished;
+        }
+
+        if (!output.canPush())
+        {
+            input.setNotNeeded();
+            return Status::PortFull;
+        }
+
+        /// Output if has data.
+        if (has_output)
+        {
+            output.pushData(std::move(output_data));
+            has_output = false;
+
+            if (!no_more_data_needed)
+                return Status::PortFull;
+
+        }
+
+        /// Stop if don't need more data.
+        if (no_more_data_needed)
+        {
+            input.close();
+            output.finish();
+            return Status::Finished;
+        }
+
+        /// Check can input.
+        if (!has_input)
+        {
+            if (input.isFinished())
+            {
+                output.finish();
+                return Status::Finished;
+            }
+
+            input.setNeeded();
+
+            updateStep();
+            if(step == LoadInMemory)
+            {
+                std::string key = filter_column_name + "_" + std::to_string(wangxinshuo_index) + "_" + std::to_string(times++);
+                auto reply = redis_client.get(const_cast<char*>(key.c_str()), key.length());
+                if(reply->type == 4)
+                {
+                    input.close();
+                    output.finish();
+                    return Status::Finished;
+                }
+                else
+                {
+                    ReadBuffer rb(reply->str, reply->len, 0);
+                    Chunk* chunk = new Chunk();
+                    ParquetToChunk(*chunk, rb, output.getHeader(), log);
+                    output_data = Port::Data{.chunk=std::move(*chunk), .exception=nullptr};
+                    has_input = true;
+                }
+            }
+            else
+            {
+                if (!input.hasData())
+                    return Status::NeedData;
+
+                input_data = input.pullData(set_input_not_needed_after_read);
+                has_input = true;
+            }
+
+
+            if (input_data.exception)
+                /// No more data needed. Exception will be thrown (or swallowed) later.
+                input.setNotNeeded();
+        }
+
+        /// Now transform.
+        return Status::Ready;
+    };
+    auto status = func();
 
     /// Until prepared sets are initialized, output port will be unneeded, and prepare will return PortFull.
     if (status != IProcessor::Status::PortFull)
@@ -220,5 +352,41 @@ void FilterTransform::transform(Chunk & chunk)
     removeFilterIfNeed(chunk);
 }
 
+void FilterTransform::transform(Chunk & input_chunk, Chunk & output_chunk)
+{
+    updateStep();
+    if(step == StoreToRedis)
+    {
+        transform(input_chunk);
+        output_chunk.swap(input_chunk);
+        std::string key = filter_column_name + "_" + std::to_string(wangxinshuo_index) + "_" + std::to_string(times++);
+        const size_t buffer_size = 1 * 1024 * 1024;
+        char* buffer = new char[buffer_size];
+        WriteBuffer wb(buffer, buffer_size);
+        ChunkToParquet(output_chunk, wb, output.getHeader(), log);
+        redis_client.set(key.c_str(), key.length(), buffer, wb.offset());
+        delete[] buffer;
+    }
+}
+
+void FilterTransform::updateStep()
+{
+    if(step == Null)
+    {
+        std::string key = filter_column_name + "_" + std::to_string(wangxinshuo_index);
+        std::string value = "wangxinshuo";
+        auto reply = redis_client.get(const_cast<char*>(key.c_str()), key.length());
+        // 4 means REDIS_REPLY_NIL
+        if(reply->type == 4)
+        {
+            step = StoreToRedis;
+            redis_client.set(key.c_str(), key.length(), value.c_str(), value.length());
+        }
+        else
+        {
+            step = LoadInMemory;
+        }
+    }
+}
 
 }
