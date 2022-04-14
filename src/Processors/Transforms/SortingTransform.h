@@ -5,6 +5,8 @@
 #include <Core/SortCursor.h>
 #include <DataStreams/IBlockInputStream.h>
 #include <Processors/ISource.h>
+#include <common/logger_useful.h>
+#include <RedisClient.h>
 
 
 namespace DB
@@ -75,6 +77,8 @@ protected:
     Status prepare() override final;
     void work() override final;
 
+    virtual void updateStep();
+
     virtual void consume(Chunk chunk) = 0;
     virtual void generate() = 0;
     virtual void serialize();
@@ -110,10 +114,24 @@ protected:
     std::unique_ptr<MergeSorter> merge_sorter;
     Processors processors;
 
+    enum class CacheStage
+    {
+        Null = 0,
+        Store,
+        Load
+    };
+
+    CacheStage cache_stage;
+    std::string sort_str;
+    RedisClient redis_client;
+    size_t times;
+
 private:
     Status prepareConsume();
     Status prepareSerialize();
     Status prepareGenerate();
+
+    Poco::Logger * log = &Poco::Logger::get("SortingTransformInterface");
 };
 
 }

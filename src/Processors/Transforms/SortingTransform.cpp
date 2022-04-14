@@ -12,6 +12,13 @@
 #include <DataStreams/NativeBlockInputStream.h>
 #include <DataStreams/NativeBlockOutputStream.h>
 
+#include <IO/WriteBuffer.h>
+#include <IO/ReadBuffer.h>
+#include <parquet/arrow/writer.h>
+#include <parquet/arrow/reader.h>
+#include <Processors/Formats/Impl/CHColumnToArrowColumn.h>
+#include <Processors/Formats/Impl/ArrowColumnToCHColumn.h>
+#include <Processors/Formats/Impl/ArrowBufferedStreams.h>
 
 namespace ProfileEvents
 {
@@ -27,6 +34,29 @@ namespace ErrorCodes
     extern const int NOT_IMPLEMENTED;
     extern const int LOGICAL_ERROR;
 }
+
+
+static void ChunkToParquet(Chunk& chunk, WriteBuffer& buffer, const Block& header, Poco::Logger* log)
+{
+    UNUSED(log);
+    const size_t columns_num = chunk.getNumColumns();
+    std::shared_ptr<arrow::Table> arrow_table;
+    CHColumnToArrowColumn::chChunkToArrowTable(arrow_table, header, chunk, columns_num, "Parquet");
+    std::unique_ptr<parquet::arrow::FileWriter> file_writer;
+    {
+        auto sink = std::make_shared<ArrowBufferedOutputStream>(buffer);
+        parquet::WriterProperties::Builder builder;
+        builder.compression(parquet::Compression::SNAPPY);
+        auto props = builder.build();
+        auto status = parquet::arrow::FileWriter::Open(*arrow_table->schema(), 
+                                                        arrow::default_memory_pool(), 
+                                                        sink, props, &file_writer);
+        if (!status.ok()) throw Exception{"Error while opening a table: " + status.ToString(), 1};
+    }
+    auto status = file_writer->WriteTable(*arrow_table, 1000000);
+    if (!status.ok()) throw Exception{"Error while writing a table: " + status.ToString(), 1};
+}
+
 
 MergeSorter::MergeSorter(Chunks chunks_, SortDescription & description_, size_t max_merged_block_size_, UInt64 limit_)
     : chunks(std::move(chunks_)), description(description_), max_merged_block_size(max_merged_block_size_), limit(limit_)
@@ -180,9 +210,41 @@ SortingTransform::SortingTransform(
     }
 
     description.swap(description_without_constants);
+
+    times = 0;
+    cache_stage = CacheStage::Null;
+    std::string host = "127.0.0.1";
+    int port = 6379;
+    for(auto& x : description) sort_str += x.dump() + "|";
+
+    redis_client.connect(host, port);
+    //updateStep();
 }
 
 SortingTransform::~SortingTransform() = default;
+
+void SortingTransform::updateStep()
+{
+    if(cache_stage == CacheStage::Null)
+    {
+        std::string key = sort_str + "_" + std::to_string(wangxinshuo_index);
+        //LOG_INFO(log, "stage key is {}", key);
+        std::string value = "wangxinshuo";
+        auto reply = redis_client.get(const_cast<char*>(key.c_str()), key.length());
+        // 4 means REDIS_REPLY_NIL
+        if(reply->type == 4)
+        {
+            //LOG_INFO(log, "Stage is store!");
+            cache_stage = CacheStage::Store;
+            redis_client.set(key.c_str(), key.length(), value.c_str(), value.length());
+        }
+        else
+        {
+            //LOG_INFO(log, "Stage is load!");
+            cache_stage = CacheStage::Load;
+        }
+    }
+}
 
 IProcessor::Status SortingTransform::prepare()
 {
@@ -298,7 +360,21 @@ IProcessor::Status SortingTransform::prepareGenerate()
     {
         if (!generated_chunk)
             return Status::Ready;
-
+        
+        {
+            updateStep();
+            if(cache_stage == CacheStage::Store) {
+                // write into redis
+                LOG_INFO(log, "Write into redis!");
+                std::string key = sort_str + "_" + std::to_string(wangxinshuo_index) + "_" + std::to_string(times++);
+                const size_t buffer_size = 1 * 1024 * 1024;
+                char* buffer = new char[buffer_size];
+                WriteBuffer wb(buffer, buffer_size);
+                ChunkToParquet(generated_chunk, wb, output.getHeader(), log);
+                redis_client.set(key.c_str(), key.length(), buffer, wb.offset());
+                delete[] buffer;
+            }
+        }
         output.push(std::move(generated_chunk));
         return Status::PortFull;
     }

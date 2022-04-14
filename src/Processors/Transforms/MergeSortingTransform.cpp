@@ -10,6 +10,13 @@
 #include <DataStreams/NativeBlockOutputStream.h>
 #include <Disks/StoragePolicy.h>
 
+#include <IO/WriteBuffer.h>
+#include <IO/ReadBuffer.h>
+#include <parquet/arrow/writer.h>
+#include <parquet/arrow/reader.h>
+#include <Processors/Formats/Impl/CHColumnToArrowColumn.h>
+#include <Processors/Formats/Impl/ArrowColumnToCHColumn.h>
+#include <Processors/Formats/Impl/ArrowBufferedStreams.h>
 
 namespace ProfileEvents
 {
@@ -25,6 +32,32 @@ namespace ErrorCodes
 {
     extern const int NOT_ENOUGH_SPACE;
 }
+
+#define THROW_WXS_NOT_OK(status)                                     \
+    do                                                                 \
+    {                                                                  \
+        if (::arrow::Status _s = (status); !_s.ok())                   \
+            throw Exception(_s.ToString(), ErrorCodes::BAD_ARGUMENTS); \
+    } while (false)
+
+static void ParquetToChunk(Chunk& chunk, ReadBuffer& buffer, const Block& header, Poco::Logger* log)
+{
+    UNUSED(log);
+    std::unique_ptr<parquet::arrow::FileReader> file_reader;
+    THROW_WXS_NOT_OK(parquet::arrow::OpenFile(asArrowFile(buffer), arrow::default_memory_pool(), &file_reader));
+    std::shared_ptr<arrow::Schema> schema;
+    THROW_WXS_NOT_OK(file_reader->GetSchema(&schema));
+    std::shared_ptr<arrow::Table> table;
+    arrow::Status read_status = file_reader->ReadTable(&table);
+    if (!read_status.ok()) throw Exception{"Error while reading Parquet data: " + read_status.ToString(), 1};
+    try{
+        ArrowColumnToCHColumn::arrowTableToCHChunk(chunk, table, header, "Parquet");
+    } catch(...){
+        LOG_INFO(log, "ArrowColumnToCHColumn::arrowTableToCHChunk exception");
+    }
+}
+
+
 class MergeSorter;
 
 
@@ -240,11 +273,34 @@ void MergeSortingTransform::generate()
 
     if (merge_sorter)
     {
-        generated_chunk = merge_sorter->read();
-        if (!generated_chunk)
-            merge_sorter.reset();
-        else
-            enrichChunkWithConstants(generated_chunk);
+        updateStep();
+        if(cache_stage == CacheStage::Load) {
+            // read from redis
+            std::string key = sort_str + "_" + std::to_string(wangxinshuo_index) + "_" + std::to_string(times++);
+            auto reply = redis_client.get(const_cast<char*>(key.c_str()), key.length());
+            generated_chunk.clear();
+            if(reply->type == 4)
+            {
+                LOG_INFO(log, "No more data in redis!");
+                merge_sorter.reset();
+                // input.close();
+                // output.finish();
+                // return Status::Finished;
+            }
+            else
+            {
+                LOG_INFO(log, "Get from redis!");
+                ReadBuffer rb(reply->str, reply->len, 0);
+                ParquetToChunk(generated_chunk, rb, outputs.back().getHeader(), log);
+            }
+        } else {
+            LOG_INFO(log, "Get from lower operator!");
+            generated_chunk = merge_sorter->read();
+            if (!generated_chunk)
+                merge_sorter.reset();
+            else
+                enrichChunkWithConstants(generated_chunk);
+        }
     }
 }
 
