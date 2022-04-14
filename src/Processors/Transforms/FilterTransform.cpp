@@ -62,9 +62,6 @@ FilterTransform::FilterTransform(
     auto & column = transformed_header.getByPosition(filter_column_position).column;
     if (column)
         constant_filter_description = ConstantFilterDescription(*column);
-    std::string host = "127.0.0.1";
-    int port = 6379;
-    redis_client.connect(host, port);
 }
 
 IProcessor::Status FilterTransform::prepare()
@@ -82,8 +79,6 @@ IProcessor::Status FilterTransform::prepare()
     }
 
     auto status = ISimpleTransform::prepare();
-    std::string key = filter_column_name, value = "wangxinshuo";
-    redis_client.set(key.c_str(), key.length(), value.c_str(), value.length());
     
 
     /// Until prepared sets are initialized, output port will be unneeded, and prepare will return PortFull.

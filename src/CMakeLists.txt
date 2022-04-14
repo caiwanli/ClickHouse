@@ -305,11 +305,11 @@ dbms_target_link_libraries (
         Poco::JSON
         Poco::MongoDB
         string_utils
-        hiredis
     PUBLIC
         ${MYSQLXX_LIBRARY}
         boost::system
         clickhouse_common_io
+        hiredis
 )
 
 target_include_directories(clickhouse_common_io PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/Core/include) # uses some includes from core

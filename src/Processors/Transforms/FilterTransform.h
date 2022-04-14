@@ -1,7 +1,6 @@
 #pragma once
 #include <Processors/ISimpleTransform.h>
 #include <Columns/FilterDescription.h>
-#include <RedisClient.h>
 
 namespace DB
 {
@@ -39,7 +38,6 @@ private:
     String filter_column_name;
     bool remove_filter_column;
     bool on_totals;
-    RedisClient redis_client;
 
     ConstantFilterDescription constant_filter_description;
     size_t filter_column_position = 0;
