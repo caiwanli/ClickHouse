@@ -43,6 +43,12 @@ PipelineExecutor::PipelineExecutor(Processors & processors_, QueryStatus * elem)
     try
     {
         graph = std::make_unique<ExecutingGraph>(processors);
+        size_t count = 0;
+        for(auto& node : graph->nodes) {
+            if(node->processor->getName() == "MergeSortingTransform") {
+                node->processor->setIndex(count++);
+            }
+        }
     }
     catch (Exception & exception)
     {
