@@ -306,6 +306,7 @@ dbms_target_link_libraries (
         Poco::MongoDB
         string_utils
         hiredis
+        ftree
     PUBLIC
         ${MYSQLXX_LIBRARY}
         boost::system

@@ -189,3 +189,7 @@
 [submodule "contrib/hiredis"]
 	path = contrib/hiredis
 	url = https://ghproxy.com/https://github.com/XinShuoWang/hiredis.git
+[submodule "contrib/ftree"]
+	path = contrib/ftree
+	url = https://github.com/XinShuoWang/FilterTree.git
+	branch = lib

@@ -291,6 +291,10 @@ if(USE_HIREDIS)
     add_subdirectory (hiredis-cmake)
 endif()
 
+if(USE_FTREE)
+    add_subdirectory (ftree-cmake)
+endif()
+
 if (USE_FASTOPS)
     add_subdirectory (fastops-cmake)
 endif()
