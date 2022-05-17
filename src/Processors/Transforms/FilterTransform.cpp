@@ -1,21 +1,21 @@
 #include <Processors/Transforms/FilterTransform.h>
 
-#include <Interpreters/ExpressionActions.h>
 #include <Columns/ColumnsCommon.h>
 #include <Core/Field.h>
+#include <Interpreters/ExpressionActions.h>
 
-#include <IO/WriteBuffer.h>
 #include <IO/ReadBuffer.h>
-#include <parquet/arrow/writer.h>
-#include <parquet/arrow/reader.h>
-#include <Processors/Formats/Impl/CHColumnToArrowColumn.h>
-#include <Processors/Formats/Impl/ArrowColumnToCHColumn.h>
+#include <IO/WriteBuffer.h>
 #include <Processors/Formats/Impl/ArrowBufferedStreams.h>
+#include <Processors/Formats/Impl/ArrowColumnToCHColumn.h>
+#include <Processors/Formats/Impl/CHColumnToArrowColumn.h>
+#include <parquet/arrow/reader.h>
+#include <parquet/arrow/writer.h>
 
-#define THROW_WXS_NOT_OK(status)                                     \
-    do                                                                 \
-    {                                                                  \
-        if (::arrow::Status _s = (status); !_s.ok())                   \
+#define THROW_WXS_NOT_OK(status) \
+    do \
+    { \
+        if (::arrow::Status _s = (status); !_s.ok()) \
             throw Exception(_s.ToString(), ErrorCodes::BAD_ARGUMENTS); \
     } while (false)
 
@@ -33,8 +33,7 @@ static void replaceFilterToConstant(Block & block, const String & filter_column_
     if (column_elem.column)
         constant_filter_description = ConstantFilterDescription(*column_elem.column);
 
-    if (!constant_filter_description.always_false
-        && !constant_filter_description.always_true)
+    if (!constant_filter_description.always_false && !constant_filter_description.always_true)
     {
         /// Replace the filter column to a constant with value 1.
         FilterDescription filter_description_check(*column_elem.column);
@@ -42,7 +41,7 @@ static void replaceFilterToConstant(Block & block, const String & filter_column_
     }
 }
 
-static void ChunkToParquet(Chunk& chunk, WriteBuffer& buffer, const Block& header, Poco::Logger* log)
+static void ChunkToParquet(Chunk & chunk, WriteBuffer & buffer, const Block & header, Poco::Logger * log)
 {
     UNUSED(log);
     const size_t columns_num = chunk.getNumColumns();
@@ -54,16 +53,16 @@ static void ChunkToParquet(Chunk& chunk, WriteBuffer& buffer, const Block& heade
         parquet::WriterProperties::Builder builder;
         builder.compression(parquet::Compression::SNAPPY);
         auto props = builder.build();
-        auto status = parquet::arrow::FileWriter::Open(*arrow_table->schema(), 
-                                                        arrow::default_memory_pool(), 
-                                                        sink, props, &file_writer);
-        if (!status.ok()) throw Exception{"Error while opening a table: " + status.ToString(), 1};
+        auto status = parquet::arrow::FileWriter::Open(*arrow_table->schema(), arrow::default_memory_pool(), sink, props, &file_writer);
+        if (!status.ok())
+            throw Exception{"Error while opening a table: " + status.ToString(), 1};
     }
     auto status = file_writer->WriteTable(*arrow_table, 1000000);
-    if (!status.ok()) throw Exception{"Error while writing a table: " + status.ToString(), 1};
+    if (!status.ok())
+        throw Exception{"Error while writing a table: " + status.ToString(), 1};
 }
 
-static void ParquetToChunk(Chunk& chunk, ReadBuffer& buffer, const Block& header, Poco::Logger* log)
+static void ParquetToChunk(Chunk & chunk, ReadBuffer & buffer, const Block & header, Poco::Logger * log)
 {
     UNUSED(log);
     std::unique_ptr<parquet::arrow::FileReader> file_reader;
@@ -72,19 +71,20 @@ static void ParquetToChunk(Chunk& chunk, ReadBuffer& buffer, const Block& header
     THROW_WXS_NOT_OK(file_reader->GetSchema(&schema));
     std::shared_ptr<arrow::Table> table;
     arrow::Status read_status = file_reader->ReadTable(&table);
-    if (!read_status.ok()) throw Exception{"Error while reading Parquet data: " + read_status.ToString(), 1};
-    try{
+    if (!read_status.ok())
+        throw Exception{"Error while reading Parquet data: " + read_status.ToString(), 1};
+    try
+    {
         ArrowColumnToCHColumn::arrowTableToCHChunk(chunk, table, header, "Parquet");
-    } catch(...){
+    }
+    catch (...)
+    {
         LOG_INFO(log, "ArrowColumnToCHColumn::arrowTableToCHChunk exception");
     }
 }
 
 Block FilterTransform::transformHeader(
-    Block header,
-    const ExpressionActionsPtr & expression,
-    const String & filter_column_name,
-    bool remove_filter_column)
+    Block header, const ExpressionActionsPtr & expression, const String & filter_column_name, bool remove_filter_column)
 {
     expression->execute(header);
 
@@ -97,11 +97,7 @@ Block FilterTransform::transformHeader(
 }
 
 FilterTransform::FilterTransform(
-    const Block & header_,
-    ExpressionActionsPtr expression_,
-    String filter_column_name_,
-    bool remove_filter_column_,
-    bool on_totals_)
+    const Block & header_, ExpressionActionsPtr expression_, String filter_column_name_, bool remove_filter_column_, bool on_totals_)
     : ISimpleTransform(header_, transformHeader(header_, expression_, filter_column_name_, remove_filter_column_), true)
     , expression(std::move(expression_))
     , filter_column_name(std::move(filter_column_name_))
@@ -137,7 +133,7 @@ IProcessor::Status FilterTransform::prepare()
         return Status::Finished;
     }
 
-    auto func = [&](){
+    auto func = [&]() {
         if (output.isFinished())
         {
             input.close();
@@ -158,7 +154,6 @@ IProcessor::Status FilterTransform::prepare()
 
             if (!no_more_data_needed)
                 return Status::PortFull;
-
         }
 
         /// Stop if don't need more data.
@@ -181,11 +176,11 @@ IProcessor::Status FilterTransform::prepare()
             input.setNeeded();
 
             updateStep();
-            if(step == LoadInMemory)
+            if (step == LoadInMemory)
             {
-                std::string key = filter_column_name + "_" + std::to_string(wangxinshuo_index) + "_" + std::to_string(times++);
-                auto reply = redis_client.get(const_cast<char*>(key.c_str()), key.length());
-                if(reply->type == 4)
+                std::string key = cache_filter_column_name + "_" + std::to_string(wangxinshuo_index) + "_" + std::to_string(times++);
+                auto reply = redis_client.get(const_cast<char *>(key.c_str()), key.length());
+                if (reply->type == 4)
                 {
                     input.close();
                     output.finish();
@@ -194,9 +189,9 @@ IProcessor::Status FilterTransform::prepare()
                 else
                 {
                     ReadBuffer rb(reply->str, reply->len, 0);
-                    Chunk* chunk = new Chunk();
-                    ParquetToChunk(*chunk, rb, output.getHeader(), log);
-                    output_data = Port::Data{.chunk=std::move(*chunk), .exception=nullptr};
+                    Chunk chunk;
+                    ParquetToChunk(chunk, rb, output.getHeader(), log);
+                    input_data = Port::Data{.chunk = std::move(chunk), .exception = nullptr};
                     has_input = true;
                 }
             }
@@ -355,36 +350,74 @@ void FilterTransform::transform(Chunk & chunk)
 void FilterTransform::transform(Chunk & input_chunk, Chunk & output_chunk)
 {
     updateStep();
-    if(step == StoreToRedis)
+    if (step == StoreToRedis)
     {
         transform(input_chunk);
         output_chunk.swap(input_chunk);
         std::string key = filter_column_name + "_" + std::to_string(wangxinshuo_index) + "_" + std::to_string(times++);
         const size_t buffer_size = 1 * 1024 * 1024;
-        char* buffer = new char[buffer_size];
+        char * buffer = new char[buffer_size];
         WriteBuffer wb(buffer, buffer_size);
         ChunkToParquet(output_chunk, wb, output.getHeader(), log);
         redis_client.set(key.c_str(), key.length(), buffer, wb.offset());
         delete[] buffer;
     }
+    else
+    {
+        transform(input_chunk);
+        output_chunk.swap(input_chunk);
+    }
 }
 
 void FilterTransform::updateStep()
 {
-    if(step == Null)
+    if (step == Null)
     {
-        std::string key = filter_column_name + "_" + std::to_string(wangxinshuo_index);
-        std::string value = "wangxinshuo";
-        auto reply = redis_client.get(const_cast<char*>(key.c_str()), key.length());
-        // 4 means REDIS_REPLY_NIL
-        if(reply->type == 4)
+        std::string prefix = "sub_filter_*";
+        auto reply = redis_client.get(const_cast<char *>(prefix.c_str()), prefix.length());
+        bool exist = false;
+        LOG_INFO(log, "filter_column_name is {}", filter_column_name);
+
+        bool go = true;
+        std::string disallow[] = {"notEmpty", "extractAll", "arrayJoin", "is_aggregate"};
+        for (auto x : disallow)
         {
-            step = StoreToRedis;
-            redis_client.set(key.c_str(), key.length(), value.c_str(), value.length());
+            if (filter_column_name.find(x) != std::string::npos)
+            {
+                go = false;
+            }
+        }
+
+        if (go)
+        {
+            FilterTree tree(filter_column_name);
+            for (size_t i = 0; i < reply->elements; ++i)
+            {
+                std::string key(std::string(reply->element[i]->str), 11);
+                LOG_INFO(log, "reply {} element is {}, match_tree key is {}", i, std::string(reply->element[i]->str), key);
+                FilterTree match_tree(key);
+                if (match_tree.Contain(tree))
+                {
+                    exist = true;
+                    cache_filter_column_name = key;
+                    break;
+                }
+            }
+        }
+
+
+        if (exist)
+        {
+            LOG_INFO(log, "exist in cache, load into memoty.");
+            step = LoadInMemory;
         }
         else
         {
-            step = LoadInMemory;
+            LOG_INFO(log, "not exist in cache");
+            step = StoreToRedis;
+            std::string key = "sub_filter_" + filter_column_name;
+            std::string value = "wangxinshuo";
+            redis_client.set(key.c_str(), key.length(), value.c_str(), value.length());
         }
     }
 }

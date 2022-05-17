@@ -2,6 +2,7 @@
 #include <Processors/ISimpleTransform.h>
 #include <Columns/FilterDescription.h>
 #include <RedisClient.h>
+#include <FilterTree.h>
 #include <common/logger_useful.h>
 
 namespace DB
@@ -40,6 +41,7 @@ protected:
 private:
     ExpressionActionsPtr expression;
     String filter_column_name;
+    String cache_filter_column_name;
     bool remove_filter_column;
     bool on_totals;
     RedisClient redis_client;
