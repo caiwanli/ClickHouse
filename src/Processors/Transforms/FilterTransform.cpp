@@ -369,35 +369,43 @@ void FilterTransform::transform(Chunk & input_chunk, Chunk & output_chunk)
     }
 }
 
+static bool canParse(std::string & s)
+{
+    std::string disallow[] = {"notEmpty", "extractAll", "arrayJoin", "is_aggregate"};
+    for (auto x : disallow)
+    {
+        if (s.find(x) != std::string::npos)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 void FilterTransform::updateStep()
 {
     if (step == Null)
     {
-        std::string prefix = "sub_filter_*";
-        auto reply = redis_client.get(const_cast<char *>(prefix.c_str()), prefix.length());
+        const std::string prefix = "sub_filter_" + std::to_string(wangxinshuo_index) + "_";
+        std::string regex = prefix + "*";
+        auto reply = redis_client.keys(const_cast<char *>(regex.c_str()), regex.length());
+
+        LOG_INFO(log, canParse(filter_column_name) ? "dosen't find disallow word" : "find disallow word");
+
         bool exist = false;
-        LOG_INFO(log, "filter_column_name is {}", filter_column_name);
-
-        bool go = true;
-        std::string disallow[] = {"notEmpty", "extractAll", "arrayJoin", "is_aggregate"};
-        for (auto x : disallow)
-        {
-            if (filter_column_name.find(x) != std::string::npos)
-            {
-                go = false;
-            }
-        }
-
-        if (go)
+        if (canParse(filter_column_name))
         {
             FilterTree tree(filter_column_name);
             for (size_t i = 0; i < reply->elements; ++i)
             {
-                std::string key(std::string(reply->element[i]->str), 11);
+                std::string key(std::string(reply->element[i]->str), prefix.length());
                 LOG_INFO(log, "reply {} element is {}, match_tree key is {}", i, std::string(reply->element[i]->str), key);
+                if (!canParse(key))
+                    continue;
                 FilterTree match_tree(key);
                 if (match_tree.Contain(tree))
                 {
+                    LOG_INFO(log, "find match cache {}", key);
                     exist = true;
                     cache_filter_column_name = key;
                     break;
@@ -415,8 +423,8 @@ void FilterTransform::updateStep()
         {
             LOG_INFO(log, "not exist in cache");
             step = StoreToRedis;
-            std::string key = "sub_filter_" + filter_column_name;
-            std::string value = "wangxinshuo";
+            std::string key = "sub_filter_" + std::to_string(wangxinshuo_index) + "_" + filter_column_name;
+            std::string value = key;
             redis_client.set(key.c_str(), key.length(), value.c_str(), value.length());
         }
     }
