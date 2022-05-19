@@ -62,7 +62,7 @@ static void ChunkToParquet(Chunk & chunk, WriteBuffer & buffer, const Block & he
         throw Exception{"Error while writing a table: " + status.ToString(), 1};
 }
 
-static void ParquetToChunk(Chunk & chunk, ReadBuffer & buffer, const Block & header, Poco::Logger * log)
+static bool ParquetToChunk(Chunk & chunk, ReadBuffer & buffer, const Block & header, Poco::Logger * log)
 {
     UNUSED(log);
     std::unique_ptr<parquet::arrow::FileReader> file_reader;
@@ -80,7 +80,9 @@ static void ParquetToChunk(Chunk & chunk, ReadBuffer & buffer, const Block & hea
     catch (...)
     {
         LOG_INFO(log, "ArrowColumnToCHColumn::arrowTableToCHChunk exception");
+        return false;
     }
+    return true;
 }
 
 Block FilterTransform::transformHeader(
@@ -173,8 +175,6 @@ IProcessor::Status FilterTransform::prepare()
                 return Status::Finished;
             }
 
-            input.setNeeded();
-
             updateStep();
             if (step == LoadInMemory)
             {
@@ -190,13 +190,15 @@ IProcessor::Status FilterTransform::prepare()
                 {
                     ReadBuffer rb(reply->str, reply->len, 0);
                     Chunk chunk;
-                    ParquetToChunk(chunk, rb, output.getHeader(), log);
+                    if(!ParquetToChunk(chunk, rb, output.getHeader(), log)) chunk_is_empty = true;
+                    else chunk_is_empty = false;
                     input_data = Port::Data{.chunk = std::move(chunk), .exception = nullptr};
                     has_input = true;
                 }
             }
             else
             {
+                input.setNeeded();
                 if (!input.hasData())
                     return Status::NeedData;
 
@@ -364,7 +366,7 @@ void FilterTransform::transform(Chunk & input_chunk, Chunk & output_chunk)
     }
     else
     {
-        transform(input_chunk);
+        if(!chunk_is_empty) transform(input_chunk);
         output_chunk.swap(input_chunk);
     }
 }

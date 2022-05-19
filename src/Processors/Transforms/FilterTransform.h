@@ -51,6 +51,7 @@ private:
         LoadInMemory,
         StoreToRedis
     } step;
+    bool chunk_is_empty;
     Poco::Logger* log;
 
     ConstantFilterDescription constant_filter_description;
