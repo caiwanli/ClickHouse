@@ -178,8 +178,6 @@ IProcessor::Status FilterTransform::prepare()
                 return Status::Finished;
             }
 
-            input.setNeeded();
-
             updateStep();
             if(step == LoadInMemory)
             {
@@ -194,14 +192,15 @@ IProcessor::Status FilterTransform::prepare()
                 else
                 {
                     ReadBuffer rb(reply->str, reply->len, 0);
-                    Chunk* chunk = new Chunk();
-                    ParquetToChunk(*chunk, rb, output.getHeader(), log);
-                    output_data = Port::Data{.chunk=std::move(*chunk), .exception=nullptr};
+                    Chunk chunk;
+                    ParquetToChunk(chunk, rb, output.getHeader(), log);
+                    output_data = Port::Data{.chunk=std::move(chunk), .exception=nullptr};
                     has_input = true;
                 }
             }
             else
             {
+                input.setNeeded();
                 if (!input.hasData())
                     return Status::NeedData;
 
