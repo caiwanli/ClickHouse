@@ -865,9 +865,11 @@ void ExpressionActions::finalize(const Names & output_columns)
             auto refcount = --columns_refcount[name];
             if (refcount <= 0 && action.type != ExpressionAction::ARRAY_JOIN)
             {
-                new_actions.push_back(ExpressionAction::removeColumn(name));
-                if (sample_block.has(name))
-                    sample_block.erase(name);
+                if(!input_columns.contains(name)) {
+                    new_actions.push_back(ExpressionAction::removeColumn(name));
+                    if (sample_block.has(name))
+                        sample_block.erase(name);
+                }
             }
         };
 
